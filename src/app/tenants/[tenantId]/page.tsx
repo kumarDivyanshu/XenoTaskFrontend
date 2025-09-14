@@ -27,6 +27,54 @@ type TenantStats = {
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL;
 
+// Server Action: Trigger per-tenant full sync
+type SyncState = { error?: string | null };
+export async function syncTenantAction(_prev: SyncState, formData: FormData): Promise<SyncState> {
+  "use server";
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (!base) return { error: "API base URL is not configured." };
+  const tenantId = (formData.get("tenantId") || "").toString();
+  if (!tenantId) return { error: "Missing tenant id." };
+  try {
+    const cookieStore = await cookies();
+    const token = cookieStore.get?.("auth_token")?.value;
+    if (!token) {
+      redirect(`/login?next=/tenants/${tenantId}`);
+    }
+    const res = await fetch(`${base.replace(/\/$/, "")}/sync/full`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Tenant-ID": tenantId,
+      },
+      cache: "no-store",
+    });
+    const isJson = res.headers.get("content-type")?.includes("application/json");
+    const data = isJson ? await res.json() : null;
+    if (!res.ok) {
+      const msg = (data as { message?: string } | null)?.message || `Sync failed (${res.status}).`;
+      redirect(`/tenants/${tenantId}?syncError=${encodeURIComponent(msg)}`);
+    }
+  } catch (e) {
+    const msg = (e as Error)?.message || "Sync failed.";
+    // Redirect with error so the banner can display it
+    redirect(`/tenants/${tenantId}?syncError=${encodeURIComponent(msg)}`);
+  }
+  // success
+  redirect(`/tenants/${tenantId}?synced=1`);
+}
+
+// Wrapper for <form action>: one-arg server action that redirects with status
+export async function syncTenantSubmit(formData: FormData): Promise<void> {
+  "use server";
+  const res = await syncTenantAction({ error: null }, formData);
+  const tenantId = (formData.get("tenantId") || "").toString();
+  if (res?.error) {
+    redirect(`/tenants/${tenantId}?syncError=${encodeURIComponent(res.error)}`);
+  }
+  redirect(`/tenants/${tenantId}?synced=1`);
+}
+
 async function fetchJson<T>(url: string, token: string): Promise<T> {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -155,15 +203,34 @@ export default async function TenantDetailsPage({ params, searchParams }: { para
     { name: "New", value: Number(nvrResp.new || 0) },
     { name: "Returning", value: Number(nvrResp.returning || 0) },
   ];
+  const spSynced = Array.isArray(sp.synced) ? sp.synced[0] : sp.synced;
+  const spSyncError = Array.isArray(sp.syncError) ? sp.syncError[0] : sp.syncError;
   console.log("Fetched analytics data:", { revenueTotal, revenueDaily, statusBreakdown, topCustomers });
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <div className="mb-4">
+      <div className="mb-4 flex items-center justify-between gap-4">
         <Link href="/tenants" className="text-sm text-blue-600 hover:underline">← Back to tenants</Link>
+        <form action={syncTenantSubmit}>
+          <input type="hidden" name="tenantId" value={tenantId} />
+          <button type="submit" className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
+            Sync Store
+          </button>
+        </form>
       </div>
       <h1 className="text-2xl font-semibold mb-2">{access.shopName || access.shopDomain}</h1>
-      <p className="text-sm text-zinc-500 mb-6">Domain: {access.shopDomain} • Role: {access.role} • Active: {access.isActive ? "Yes" : "No"}</p>
+      <p className="text-sm text-zinc-500">Domain: {access.shopDomain} • Role: {access.role} • Active: {access.isActive ? "Yes" : "No"}</p>
+      {spSynced === "1" ? (
+        <div className="mt-3 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900/40 dark:bg-green-900/20 dark:text-green-300">
+          Sync started successfully.
+        </div>
+      ) : null}
+      {spSyncError ? (
+        <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">
+          {decodeURIComponent(String(spSyncError))}
+        </div>
+      ) : null}
+      <div className="mb-6" />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
