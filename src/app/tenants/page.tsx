@@ -179,6 +179,52 @@ export async function deleteTenantSubmit(formData: FormData): Promise<void> {
   redirect("/tenants");
 }
 
+// Sync tenant server action (full sync)
+export async function syncTenantAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  "use server";
+  const cookieStore = await cookies();
+  const token = cookieStore.get?.("auth_token")?.value;
+  if (!token) return { error: "Not authenticated." };
+  if (!apiBase) return { error: "API base URL not configured." };
+
+  const tenantId = (formData.get("tenantId") || "").toString().trim();
+  if (!tenantId) return { error: "Missing tenant id." };
+
+  const res = await fetch(`${apiBase.replace(/\/$/, "")}/sync/full`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-ID": tenantId,
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const isJson = res.headers.get("content-type")?.includes("application/json");
+    const body: unknown = isJson ? await res.json().catch(() => null) : await res.text().catch(() => "");
+    const msg = (() => {
+      if (typeof body === "string") return body;
+      if (body && typeof body === "object") {
+        const rec = body as Record<string, unknown>;
+        if (typeof rec.message === "string") return rec.message;
+      }
+      return null;
+    })();
+    return { error: msg || `Failed to start sync (${res.status}).` };
+  }
+  return { success: true };
+}
+
+// Wrapper for sync action to use in <form action>
+export async function syncTenantSubmit(formData: FormData): Promise<void> {
+  "use server";
+  const result = await syncTenantAction({ error: null, success: false }, formData);
+  if (result?.error) {
+    redirect(`/tenants?error=${encodeURIComponent(result.error)}`);
+  }
+  redirect(`/tenants?synced=1`);
+}
+
 export default async function TenantsPage({ searchParams }: { searchParams?: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const sp = (await searchParams) || {};
   const cookieStore = await cookies();
@@ -193,12 +239,20 @@ export default async function TenantsPage({ searchParams }: { searchParams?: Pro
 
   const data = await fetchTenants(token);
 
+  const spSynced = typeof sp?.synced === "string" ? sp.synced : Array.isArray(sp.synced) ? sp.synced[0] : undefined;
   return (
     <div className="mx-auto max-w-4xl p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-semibold">Your Stores</h1>
         <p className="text-sm text-zinc-500">Manage your connected Shopify stores</p>
       </div>
+
+      {typeof sp?.error === "string" && sp.error ? (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">{sp.error}</div>
+      ) : null}
+      {spSynced === "1" ? (
+        <div className="mb-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900/40 dark:bg-green-900/20 dark:text-green-300">Sync started successfully.</div>
+      ) : null}
 
       <div className="mb-8 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="mb-3 text-lg font-medium">Connect a new store</h2>
@@ -237,6 +291,10 @@ export default async function TenantsPage({ searchParams }: { searchParams?: Pro
                   </div>
                   <div className="flex items-center gap-3">
                     <Link href={`/tenants/${t.tenantId}`} className="text-sm text-blue-600 hover:underline">View details</Link>
+                    <form action={syncTenantSubmit}>
+                      <input type="hidden" name="tenantId" value={t.tenantId} />
+                      <button type="submit" className="text-sm text-zinc-600 hover:underline">Sync</button>
+                    </form>
                     <form action={deleteTenantSubmit}>
                       <input type="hidden" name="tenantId" value={t.tenantId} />
                       <button type="submit" className="text-sm text-red-600 hover:underline">Delete</button>
