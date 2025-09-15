@@ -129,10 +129,20 @@ export default function LoginPage() {
           </p>
         </div>
         <LoginForm action={loginAction} />
+        <div className="mt-4 text-center">
+          <a href="/register" className="text-sm text-blue-600 hover:underline">Don’t have an account? Register</a>
+        </div>
+        <div className="mt-3 text-center">
+          <a href="https://xenotask-production.up.railway.app/swagger-ui/index.html?urls.primaryName=auth" target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900">
+            Show documentation
+          </a>
+        </div>
         <p className="mt-6 text-center text-xs text-zinc-500">
           By signing in, you agree to our Terms and Privacy Policy.
         </p>
       </div>
+      {/* Hide global header logout button on login page */}
+      <style>{`[aria-label="Logout"]{display:none !important;}`}</style>
     </div>
   );
 }
